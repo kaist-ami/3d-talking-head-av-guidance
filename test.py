@@ -25,7 +25,7 @@ def get_predictions(args, model, test_loader):
             condition_subject = train_subject
             iter = train_subjects_list.index(condition_subject)
             one_hot = one_hot_all[:,iter,:]
-            prediction = model.predict(audio, template, one_hot)
+            prediction = model.facial_animator.predict(audio, template, one_hot)
             prediction = prediction.squeeze() # (frame, num_verts*3)
             np.save(
                 os.path.join(
@@ -38,7 +38,7 @@ def get_predictions(args, model, test_loader):
             for iter in range(one_hot_all.shape[-1]):
                 condition_subject = train_subjects_list[iter]
                 one_hot = one_hot_all[:,iter,:]
-                prediction = model.predict(audio, template, one_hot)
+                prediction = model.facial_animator.predict(audio, template, one_hot)
                 prediction = prediction.squeeze() # (frame, num_verts*3)
                 np.save(
                     os.path.join(
@@ -62,17 +62,27 @@ def main():
     parser.add_argument(
         "--test_model_path",
         type=str,
-        default="",
+        required=True,
         help="Path to model weight file"
+    )
+    parser.add_argument(
+        "--save_root_dir", type=str, default="outputs/vocaset/interspeech",
     )
     cmd_input = parser.parse_args()
     if cmd_input.dataset=="vocaset":
         args = load_config("config/vocaset.yaml")
     elif cmd_input.dataset == "BIWI":
         args = load_config("config/biwi.yaml")
-    if os.path.exists(args.test_model_path):
+    if os.path.exists(cmd_input.test_model_path):
         setattr(args, "test_model_path", cmd_input.test_model_path)
-    
+    else:
+        raise FileNotFoundError(f"The model path {cmd_input.test_model_path} not found!")
+
+    # Set the paths
+    if cmd_input.save_root_dir is not None and os.path.exists(cmd_input.save_root_dir):
+        args.save_root_dir = cmd_input.save_root_dir
+    args.save_pred_path = os.path.join(args.save_root_dir, args.save_pred_path) # directory
+
     # Make directories to save results
     make_dirs(args.save_pred_path)
 
@@ -85,7 +95,7 @@ def main():
     dataset = get_dataloaders(args)
 
     # Test the model
-    get_predictions(args, model.facial_animator, dataset["test"])
+    get_predictions(args, model, dataset["test"])
 
 if __name__=="__main__":
     main()

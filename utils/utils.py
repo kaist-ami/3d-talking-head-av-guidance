@@ -54,9 +54,7 @@ def get_lip_verts(dataset):
 
 
 def make_dirs(dir_path:str):
-    if os.path.exists(dir_path):
-        shutil.rmtree(dir_path)
-    os.makedirs(dir_path)
+    os.makedirs(dir_path, exist_ok=True)
 
 
 def batch_orth_proj(X, camera):
@@ -90,3 +88,34 @@ def cut_or_pad(data, size, dim=0):
         data = data[:size]
     assert data.size(dim) == size
     return data
+
+def tensor2video(tensor):
+    """
+    For debugging
+    Args:
+        tensor (torch.Tensor): RGB video [T, C, H, W] with range [0, 1]
+    """
+    video = tensor.clone().detach().cpu().numpy()
+    if video.shape[1] == 1: # grayscale → RGB
+        video = np.repeat(video, 3, axis=1)  # [T, 3, H, W]
+    video = video * 255.
+    video = np.maximum(np.minimum(video, 255), 0)
+    video = video.transpose(0, 2, 3, 1)
+    return video.astype(np.uint8)
+
+def save_rendered_video(rendered_video, fps=30, save_fname=None):
+    """
+    Args:
+        rendered_video: torch.Tensor, [T, C, H, W], normarlized
+    """
+    import torchvision
+    video = tensor2video(rendered_video)
+    torchvision.io.write_video(save_fname, video, fps=fps, audio_codec='aac')
+
+def save_rendered_image(tensor_image, save_fname):
+    """
+    tensor_image (torch.Tensor): [C, H, W] with range [0, 1]?
+    """
+    from PIL import Image
+    img_np = (tensor_image.copy().detach().cpu().numpy() * 255).astype(np.uint8)
+    Image.fromarray(img_np).save(f"{save_fname}.jpg")

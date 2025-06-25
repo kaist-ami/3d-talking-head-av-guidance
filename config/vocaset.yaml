@@ -26,7 +26,8 @@ feature_dim: 64
 # period in PPE
 period: 30
 # path of lip reading model
-lipreader_path: ""
+lipreader_path: 
+lipreader_modality: "audiovisual"
 
 # Training
 # ------------------------------------------
@@ -47,12 +48,19 @@ device: "cuda"
 
 # Logging & Saving
 # ------------------------------------------
+# root directory to save the things
+save_root_dir: "outputs/vocaset/"
 # path to save predicted meshes
-save_pred_path: "outputs/pred"
+save_pred_path: "pred"
 # path to save rendered videos
-save_video_path: "outputs/video"
+save_video_path: "render"
 # path to the trained model
-save_model_path: "outputs/model"
+save_model_path: "model"
+# path to save the results of metric computation
+save_result_path: "result"
+# wandb
+log_wandb: False
+wandb_project: FaceFormer_vocaset
 
 # Testing
 # ------------------------------------------

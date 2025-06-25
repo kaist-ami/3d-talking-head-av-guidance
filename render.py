@@ -152,11 +152,19 @@ def main():
     parser.add_argument(
         "--dataset", type=str, default="vocaset", help="Dataset to train the model",
     )
-    args = parser.parse_args()
-    if args.dataset=="vocaset":
+    parser.add_argument(
+        "--save_root_dir", type=str, default="outputs/vocaset/interspeech",
+    )
+    cmd_input = parser.parse_args()
+    if cmd_input.dataset=="vocaset":
         args = load_config("config/vocaset.yaml")
-    elif args.dataset == "BIWI":
+    elif cmd_input.dataset == "BIWI":
         args = load_config("config/biwi.yaml")
+
+    # Set the paths
+    if cmd_input.save_root_dir is not None and os.path.exists(cmd_input.save_root_dir):
+        args.save_root_dir = cmd_input.save_root_dir
+    args.save_video_path = os.path.join(args.save_root_dir, args.save_video_path) # directory
 
     # Make directories to save results
     make_dirs(args.save_video_path)

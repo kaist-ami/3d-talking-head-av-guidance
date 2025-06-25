@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+import wandb
 
 from auto_avsr.datamodule.transforms import AdaptiveTimeMask
 from models.faceformer import Faceformer
@@ -25,7 +26,7 @@ class BaseModel(nn.Module):
 
         if mode=="train":
             # Build lip reader model
-            self.lipreader = self.build_lipreader(args.lipreader_path)
+            self.lipreader = self.build_lipreader(args.lipreader_path, modality=args.lipreader_modality)
             self.lipreader.to(args.device)
 
             # Optimizer 
@@ -63,7 +64,7 @@ class BaseModel(nn.Module):
         if self.mode=="train": self.lipreader.eval()
 
 
-    def build_lipreader(self, model_path):
+    def build_lipreader(self, model_path, modality="audiovisual"):
         # Load configurations
         from hydra import compose, initialize
         initialize(version_base="1.3", config_path="../auto_avsr/configs")
@@ -72,7 +73,11 @@ class BaseModel(nn.Module):
         cfg.pretrained_model_path = model_path
         
         # Load lip reader model
-        from auto_avsr.lightning_av import ModelModule
+        if modality=="audiovisual":
+            from auto_avsr.lightning_av import ModelModule
+        elif modality=="video":
+            from auto_avsr.lightning import ModelModule
+            cfg.data.modality = "video"
         lipread_model = ModelModule(cfg).model
         lipread_model.load_state_dict(
             torch.load(
@@ -91,7 +96,7 @@ class BaseModel(nn.Module):
 
 
     def forward(
-        self, audio, template, vertice, one_hot, waveform, text_token,
+        self, audio, template, vertice, one_hot, waveform, text_token, epoch, mode="train",
     ):
 
         # Loss from facial animator
@@ -103,57 +108,71 @@ class BaseModel(nn.Module):
             -1, self.args.vertice_dim//3, 3,
         ) # (frame, num_verts, 3)
 
-        # Lip vertex loss
-        # -----------------------------------------------------------------------------
-        mouth_map = get_lip_verts(self.args.dataset)
-        lip_pred = prediction[:, mouth_map] # [frame, num_lip_verts, 3]
-        lip_gt = gt_vertice.squeeze().reshape(
-            -1, self.args.vertice_dim//3, 3,
-        )[:, mouth_map] # [frame, num_lip_verts, 3]
-        lip_vert_loss = nn.MSELoss()(lip_pred, lip_gt)
-        
-        # AV loss
-        # -----------------------------------------------------------------------------
-        
-        # Transform vertices
-        if self.args.dataset=="vocaset":
-            proj_camera = torch.Tensor([8, 0, 0]).expand(len(prediction), -1).cuda()
-        elif self.args.dataset=="BIWI":
-            proj_camera = torch.Tensor([1.6, 0, 0]).expand(len(prediction), -1).cuda()
-        trans_verts = batch_orth_proj(prediction, proj_camera) # [frame, num_verts, 3]
-        trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
-        
-        # Render face 
-        rendered_video = self.render.render_shape(prediction, trans_verts) # [frame, C=3, H=224, W=224]
-        
-        # Crop lip region
-        if self.args.dataset=="vocaset":
-            rendered_video = rendered_video[:, :, 107:203, 63:159] # [frame, 3, 96, 96]
-        elif self.args.dataset=="BIWI":
-            rendered_video = rendered_video[:, :, 107:203, 68:164] # [frame, 3, 96, 96]
-        
-        # Transform rendered video
-        video = self.video_transform(rendered_video) # [frame, 1, 88, 88]
-        video = video.unsqueeze(dim=0) # [B=1, frame, 1, 88, 88]
+        if mode=="train":
+            # Lip vertex loss
+            # -----------------------------------------------------------------------------
+            mouth_map = get_lip_verts(self.args.dataset) # [4996,]
+            lip_pred = prediction[:, mouth_map] # [frame, num_lip_verts, 3]
+            lip_gt = gt_vertice.squeeze().reshape(
+                -1, self.args.vertice_dim//3, 3,
+            )[:, mouth_map] # [frame, num_lip_verts, 3]
+            lip_vert_loss = nn.MSELoss()(lip_pred, lip_gt)
+            
+            # AV loss
+            # -----------------------------------------------------------------------------
+            
+            # Transform vertices
+            if self.args.dataset=="vocaset":
+                proj_camera = torch.Tensor([8, 0, 0]).expand(len(prediction), -1).cuda()
+            elif self.args.dataset=="BIWI":
+                proj_camera = torch.Tensor([1.6, 0, 0]).expand(len(prediction), -1).cuda()
+            trans_verts = batch_orth_proj(prediction, proj_camera) # [frame, num_verts, 3]
+            trans_verts[:, :, 1:] = -trans_verts[:, :, 1:]
+            
+            # Render face 
+            rendered_video = self.render.render_shape(prediction, trans_verts) # [frame, C=3, H=224, W=224]
+            
+            # Crop lip region
+            if self.args.dataset=="vocaset":
+                rendered_video = rendered_video[:, :, 107:203, 63:159] # [frame, 3, 96, 96]
+            elif self.args.dataset=="BIWI":
+                rendered_video = rendered_video[:, :, 107:203, 68:164] # [frame, 3, 96, 96]
+            
+            # Transform rendered video
+            video = self.video_transform(rendered_video) # [frame, 1, 88, 88]
+            video = video.unsqueeze(dim=0) # [B=1, frame, 1, 88, 88]
 
-        # Compute AV loss
-        waveform = cut_or_pad(waveform, video.shape[1] * 640)
-        waveform = self.adaptive_time_mask(waveform)
-        waveform = F.layer_norm(waveform, waveform.shape, eps=1e-8)
-        av_loss, loss_ctc, loss_att, acc = self.lipreader(
-            video=video, 
-            audio=waveform.unsqueeze(0), 
-            video_lengths=torch.Tensor([video.shape[1]]).cuda(),
-            audio_lengths=torch.Tensor([waveform.shape[0]]).to(torch.int64).cuda(), 
-            label=text_token,
-        )
+            # Compute AV loss
+            waveform = cut_or_pad(waveform, video.shape[1] * 640) # [L, 1]
+            waveform = self.adaptive_time_mask(waveform)
+            waveform = F.layer_norm(waveform, waveform.shape, eps=1e-8)
+            av_loss, loss_ctc, loss_att, acc = self.lipreader(
+                video=video, 
+                audio=waveform.unsqueeze(0), 
+                video_lengths=torch.Tensor([video.shape[1]]).cuda(),
+                audio_lengths=torch.Tensor([waveform.shape[0]]).to(torch.int64).cuda(), 
+                label=text_token,
+            )
 
-        # Combine all losses
-        # -----------------------------------------------------------------------------
-        all_loss = (
-            geo_loss
-            + lip_vert_loss * self.args.lip_vert_weight
-            + av_loss * self.args.lipread_weight
-        )
+            # Combine all losses
+            # -----------------------------------------------------------------------------
+            all_loss = (
+                geo_loss
+                + lip_vert_loss * self.args.lip_vert_weight
+                + av_loss * self.args.lipread_weight
+            )
+
+            if self.args.log_wandb:
+                wandb.log(
+                    {
+                        "Train/Total_loss": all_loss.item(),
+                        "Train/Geo_loss": geo_loss.item(),
+                        "Train/LipVert_loss": lip_vert_loss.item(),
+                        "Train/LipRead_loss": av_loss.item()
+                    }
+                )
+        
+        elif mode=="val":
+            all_loss = geo_loss
 
         return all_loss

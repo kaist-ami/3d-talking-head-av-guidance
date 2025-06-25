@@ -38,7 +38,7 @@ def train_step(args, epoch, model, train_loader):
         text_token = data_dict['text_token'].to(torch.int64).to(device="cuda")
         waveform = data_dict['waveform'].transpose(0, 1).to(device="cuda")
 
-        loss = model(audio, template, vertice, one_hot, waveform, text_token)
+        loss = model(audio, template, vertice, one_hot, waveform, text_token, epoch, mode="train")
 
         # Update
         loss.backward()
@@ -50,7 +50,7 @@ def train_step(args, epoch, model, train_loader):
         torch.cuda.empty_cache()
 
         # Logging
-        pbar.set_description(f"(Epoch {epoch} | Loss {loss.item():.8f}")
+        pbar.set_description(f"Epoch {epoch} | Loss {loss.item():.8f}")
 
 
 def val_step(args, epoch, model, val_loader):
@@ -78,13 +78,13 @@ def val_step(args, epoch, model, val_loader):
             condition_subject = train_subject
             iter = train_subjects_list.index(condition_subject)
             one_hot = one_hot_all[:,iter,:]
-            loss = model(audio, template, vertice, one_hot, waveform, text_token)
+            loss = model(audio, template, vertice, one_hot, waveform, text_token, epoch, mode="val")
             valid_loss_log.append(loss.item())
         else:
             for iter in range(one_hot_all.shape[-1]):
                 condition_subject = train_subjects_list[iter]
                 one_hot = one_hot_all[:,iter,:]
-                loss = model(audio, template, vertice, one_hot, waveform, text_token)
+                loss = model(audio, template, vertice, one_hot, waveform, text_token, epoch, mode="val")
                 valid_loss_log.append(loss.item())
                 torch.cuda.empty_cache()
 

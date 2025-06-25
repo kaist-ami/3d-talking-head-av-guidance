@@ -8,6 +8,7 @@ from tqdm import tqdm
 from transformers import Wav2Vec2Processor
 import librosa
 import re
+import torchaudio
 
 from auto_avsr.preparation.transforms import TextTransform
 
@@ -21,8 +22,8 @@ class Dataset(data.Dataset):
         self.one_hot_labels = np.eye(len(subjects_dict["train"]))
 
     def __getitem__(self, index):
+        file_name = self.data[index]["name"]
         if self.data_type == "train":
-            file_name = self.data[index]["name"]
             subject = "_".join(file_name.split("_")[:-1])
             one_hot = self.one_hot_labels[self.subjects_dict["train"].index(subject)]
         else:
@@ -44,6 +45,10 @@ class Dataset(data.Dataset):
     def __len__(self):
         return self.len
 
+def load_audio(path):
+    waveform, _ = torchaudio.load(path, normalize=True) # [1, Len] for mono
+    waveform = torch.mean(waveform, dim=0, keepdim=True) # stereo -> mono
+    return waveform.squeeze(0) # [Len,]
 
 def read_data(args):
     data = defaultdict(dict)
@@ -106,7 +111,7 @@ def read_data(args):
                 processor(speech_array, sampling_rate=16000).input_values
             )
             data[key]["audio"] = input_values # np.ndarray, shape - (len_signal,)
-            data[key]["waveform"] = speech_array # np.ndarray, shape - (len_signal,)
+            data[key]["waveform"] = load_audio(wav_path) # torch.tensor, shape - (len_signal',)
             
             # Template (ndarray): shape - (num_verts*3)
             temp = templates[subject_id]
